@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { appConfig } from './config/app.config';
 import { DatabaseModule } from './database/database.module';
 import { DownloadModule } from './download/download.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { DownloadModule } from './download/download.module';
     }),
     DatabaseModule,
     DownloadModule,
+    HealthModule,
   ],
   controllers: [],
   providers: [],
