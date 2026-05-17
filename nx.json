@@ -2,10 +2,7 @@
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "analytics": false,
   "namedInputs": {
-    "default": [
-      "{projectRoot}/**/*",
-      "sharedGlobals"
-    ],
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [
       "default",
       "!{projectRoot}/.eslintrc.json",
@@ -55,9 +52,7 @@
       "options": {
         "targetName": "test"
       },
-      "exclude": [
-        "apps/api-e2e/**/*"
-      ]
+      "exclude": ["apps/api-e2e/**/*"]
     },
     {
       "plugin": "@nx/docker",
@@ -69,13 +64,39 @@
           "name": "docker:run"
         }
       }
+    },
+    {
+      "plugin": "@nx/rspack/plugin",
+      "options": {
+        "buildTargetName": "build",
+        "serveTargetName": "serve",
+        "serveStaticTargetName": "serve-static",
+        "previewTargetName": "preview",
+        "buildDepsTargetName": "build-deps",
+        "watchDepsTargetName": "watch-deps"
+      }
     }
   ],
   "targetDefaults": {
     "test": {
-      "dependsOn": [
-        "^build"
-      ]
+      "dependsOn": ["^build"]
+    }
+  },
+  "generators": {
+    "@nx/react": {
+      "application": {
+        "babel": true,
+        "style": "scss",
+        "linter": "eslint",
+        "bundler": "rspack"
+      },
+      "component": {
+        "style": "scss"
+      },
+      "library": {
+        "style": "scss",
+        "linter": "eslint"
+      }
     }
   }
 }
