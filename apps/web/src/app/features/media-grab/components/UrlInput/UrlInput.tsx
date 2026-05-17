@@ -9,8 +9,8 @@ import {
 } from 'react';
 import type { AddItemInput } from '../../types';
 import { detectPlatform, isValidUrl, PLATFORMS } from '../../utils/platform';
-import { Icons } from '../Icon';
-import { PlatformGlyph } from '../PlatformGlyph';
+import { Icons } from '../Icon/Icon';
+import { PlatformGlyph } from '../PlatformGlyph/PlatformGlyph';
 
 export interface UrlInputProps {
   onAdd: (item: AddItemInput) => void;

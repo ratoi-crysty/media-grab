@@ -3,8 +3,8 @@ import type { Density, DownloadItem, ItemAction } from '../../types';
 import { fmtBytes, fmtEta, fmtRelative, fmtSpeed } from '../../utils/format';
 import { PLATFORMS } from '../../utils/platform';
 import { thumbSvg } from '../../utils/thumb';
-import { Icons } from '../Icon';
-import { PlatformGlyph } from '../PlatformGlyph';
+import { Icons } from '../Icon/Icon';
+import { PlatformGlyph } from '../PlatformGlyph/PlatformGlyph';
 
 export interface ItemRowProps {
   item: DownloadItem;

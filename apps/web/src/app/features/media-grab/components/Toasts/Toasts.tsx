@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { Toast } from '../../types';
-import { Icons } from '../Icon';
+import { Icons } from '../Icon/Icon';
 
 export interface ToastsProps {
   toasts: Toast[];

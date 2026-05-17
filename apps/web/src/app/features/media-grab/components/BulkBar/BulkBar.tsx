@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { BulkAction } from '../../types';
-import { Icons } from '../Icon';
+import { Icons } from '../Icon/Icon';
 
 export interface BulkBarProps {
   count: number;

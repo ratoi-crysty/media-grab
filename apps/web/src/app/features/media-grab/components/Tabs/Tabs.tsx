@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import type { Density, FilterId, StatusCounts } from '../../types';
-import { Icons } from '../Icon';
+import { Icons } from '../Icon/Icon';
 
 export interface TabsProps {
   counts: StatusCounts;

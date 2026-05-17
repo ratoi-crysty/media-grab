@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Icons } from '../Icon';
+import { Icons } from '../Icon/Icon';
 
 export interface ShortcutsModalProps {
   open: boolean;
