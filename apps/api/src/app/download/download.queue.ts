@@ -1,4 +1,9 @@
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
@@ -28,10 +33,11 @@ export interface RunningJob {
 }
 
 @Injectable()
-export class DownloadQueueService implements OnModuleInit {
+export class DownloadQueueService implements OnApplicationBootstrap {
   private readonly logger: Logger = new Logger(DownloadQueueService.name);
   private readonly running: Map<string, RunningJob> = new Map();
   private draining: boolean = false;
+  private bootReconciled: boolean = false;
 
   constructor(
     private readonly repo: DownloadRepository,
@@ -40,8 +46,24 @@ export class DownloadQueueService implements OnModuleInit {
     @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  async onApplicationBootstrap(): Promise<void> {
+    await this.reconcileOnBoot();
     void this.tryDrain();
+  }
+
+  private async reconcileOnBoot(): Promise<void> {
+    if (this.bootReconciled) return;
+    this.bootReconciled = true;
+    const interrupted: DownloadEntity[] = await this.repo.markInterruptedOnBoot();
+    if (interrupted.length === 0) return;
+    this.logger.log(
+      `boot: marked ${interrupted.length} interrupted download(s) failed`,
+    );
+    for (const row of interrupted) {
+      await this.cleanupPartial(row.id);
+      const updated: DownloadEntity | null = await this.repo.findById(row.id);
+      if (updated) this.events.emitTransition(this.buildSnapshot(updated));
+    }
   }
 
   getRunningProgress(id: string): SpawnProgress | null {
