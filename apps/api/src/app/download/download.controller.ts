@@ -7,10 +7,12 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  MessageEvent,
   NotFoundException,
   Param,
   Post,
   Query,
+  Sse,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -21,10 +23,10 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { Observable, map } from 'rxjs';
 import type {
   DownloadModel,
   DownloadPreviewModel,
-  DownloadStatus,
 } from '@media-grab/common';
 import { CreateDownloadDto } from './dto/create-download.dto';
 import { DownloadResponseDto } from './dto/download.dto';
@@ -34,6 +36,7 @@ import {
   PreviewResponseDto,
 } from './dto/preview.dto';
 import { DownloadEntity } from './download.entity';
+import { DownloadEventsService } from './download.events';
 import { DownloadQueueService } from './download.queue';
 import { DownloadRepository } from './download.repository';
 import { classifyYtdlpError, ClassifiedYtdlpError } from './ytdlp-error';
@@ -48,7 +51,20 @@ export class DownloadController {
     private readonly ytdlp: YtdlpService,
     private readonly repo: DownloadRepository,
     private readonly queue: DownloadQueueService,
+    private readonly events: DownloadEventsService,
   ) {}
+
+  @Sse('stream')
+  @ApiOperation({
+    summary: 'Server-Sent Events stream of Download snapshots',
+    description:
+      'Emits the full Download object on every state transition and throttled (~4Hz) progress tick. Clients should fetch GET /api/download once on connect for initial state, then merge events by id.',
+  })
+  stream(): Observable<MessageEvent> {
+    return this.events.stream$.pipe(
+      map((snapshot: DownloadModel): MessageEvent => ({ data: snapshot })),
+    );
+  }
 
   @Get('preview')
   @ApiOperation({
@@ -146,30 +162,6 @@ export class DownloadController {
   }
 
   private toResponse(row: DownloadEntity): DownloadResponseDto {
-    const runningProgress = this.queue.getRunningProgress(row.id);
-    const live: { downloaded: number; size: number } = runningProgress
-      ? { downloaded: runningProgress.downloaded, size: runningProgress.total || row.size }
-      : { downloaded: row.downloaded, size: row.size };
-    const response: DownloadResponseDto = {
-      id: row.id,
-      url: row.url,
-      platform: row.platform,
-      title: row.title,
-      uploader: row.uploader,
-      duration: row.duration,
-      format: row.format,
-      quality: row.quality,
-      size: live.size,
-      downloaded: live.downloaded,
-      status: row.status as DownloadStatus,
-      error: row.error,
-      errorDetail: row.errorDetail,
-      filePath: row.filePath,
-      hue: row.hue,
-      createdAt: row.createdAt,
-      completedAt: row.completedAt,
-    };
-    void (response satisfies DownloadModel);
-    return response;
+    return this.queue.buildSnapshot(row) as DownloadResponseDto;
   }
 }

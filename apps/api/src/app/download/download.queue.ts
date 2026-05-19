@@ -4,6 +4,7 @@ import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { appConfig } from '../config/app.config';
 import { DownloadEntity } from './download.entity';
+import { DownloadEventsService } from './download.events';
 import { DownloadInsertInput, DownloadRepository } from './download.repository';
 import {
   SpawnHandle,
@@ -13,7 +14,9 @@ import {
 } from './ytdlp.service';
 import type {
   CreateDownloadInput,
+  DownloadModel,
   DownloadPreviewModel,
+  DownloadStatus,
 } from '@media-grab/common';
 
 export interface RunningJob {
@@ -33,6 +36,7 @@ export class DownloadQueueService implements OnModuleInit {
   constructor(
     private readonly repo: DownloadRepository,
     private readonly ytdlp: YtdlpService,
+    private readonly events: DownloadEventsService,
     @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
   ) {}
 
@@ -44,6 +48,31 @@ export class DownloadQueueService implements OnModuleInit {
     const job: RunningJob | undefined = this.running.get(id);
     if (!job) return null;
     return { downloaded: job.downloaded, total: job.total, speed: job.speed };
+  }
+
+  buildSnapshot(row: DownloadEntity): DownloadModel {
+    const prog: SpawnProgress | null = this.getRunningProgress(row.id);
+    const downloaded: number = prog ? prog.downloaded : row.downloaded;
+    const size: number = prog ? prog.total || row.size : row.size;
+    return {
+      id: row.id,
+      url: row.url,
+      platform: row.platform,
+      title: row.title,
+      uploader: row.uploader,
+      duration: row.duration,
+      format: row.format,
+      quality: row.quality,
+      size,
+      downloaded,
+      status: row.status as DownloadStatus,
+      error: row.error,
+      errorDetail: row.errorDetail,
+      filePath: row.filePath,
+      hue: row.hue,
+      createdAt: row.createdAt,
+      completedAt: row.completedAt,
+    };
   }
 
   async enqueue(
@@ -71,6 +100,7 @@ export class DownloadQueueService implements OnModuleInit {
       completedAt: null,
     };
     const row: DownloadEntity = await this.repo.insert(insertInput);
+    this.events.emitTransition(this.buildSnapshot(row));
     void this.tryDrain();
     return row;
   }
@@ -89,6 +119,8 @@ export class DownloadQueueService implements OnModuleInit {
         error: 'Cancelled by user',
         errorDetail: null,
       });
+      const updated: DownloadEntity | null = await this.repo.findById(id);
+      if (updated) this.events.emitTransition(this.buildSnapshot(updated));
     }
   }
 
@@ -157,9 +189,12 @@ export class DownloadQueueService implements OnModuleInit {
         job.downloaded = p.downloaded;
         job.total = p.total;
         job.speed = p.speed;
+        this.events.emitProgress(this.buildSnapshot({ ...row, status: 'downloading' }));
       },
     );
     this.running.set(row.id, job);
+    const started: DownloadEntity | null = await this.repo.findById(row.id);
+    if (started) this.events.emitTransition(this.buildSnapshot(started));
 
     void job.handle.result.then(
       async (result: SpawnResult): Promise<void> => {
@@ -170,6 +205,9 @@ export class DownloadQueueService implements OnModuleInit {
           size: result.size,
           completedAt: Date.now(),
         });
+        const done: DownloadEntity | null = await this.repo.findById(row.id);
+        if (done) this.events.emitTransition(this.buildSnapshot(done));
+        this.events.forget(row.id);
         this.logger.log(`completed ${row.id} → ${result.filePath}`);
         void this.tryDrain();
       },
@@ -194,6 +232,9 @@ export class DownloadQueueService implements OnModuleInit {
         if (isCancelled) {
           await this.cleanupPartial(row.id);
         }
+        const failed: DownloadEntity | null = await this.repo.findById(row.id);
+        if (failed) this.events.emitTransition(this.buildSnapshot(failed));
+        this.events.forget(row.id);
         this.logger.warn(`failed ${row.id}: ${errorMsg}`);
         void this.tryDrain();
       },
