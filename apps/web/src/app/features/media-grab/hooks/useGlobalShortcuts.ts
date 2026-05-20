@@ -1,22 +1,14 @@
 import { useEffect } from 'react';
-import type { DownloadItem } from '../types';
 
 export interface ShortcutHandlers {
   onToggleShortcuts: () => void;
   onCloseOverlays: () => void;
   onToggleSettings: () => void;
-  setItems: React.Dispatch<React.SetStateAction<DownloadItem[]>>;
-  addToast: (title: string) => void;
+  onClearCompleted: () => void;
 }
 
 export const useGlobalShortcuts = (h: ShortcutHandlers): void => {
-  const {
-    onToggleShortcuts,
-    onCloseOverlays,
-    onToggleSettings,
-    setItems,
-    addToast,
-  } = h;
+  const { onToggleShortcuts, onCloseOverlays, onToggleSettings, onClearCompleted } = h;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (document.activeElement as HTMLElement | null)?.tagName;
@@ -32,11 +24,10 @@ export const useGlobalShortcuts = (h: ShortcutHandlers): void => {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !inField) {
         e.preventDefault();
-        setItems((prev) => prev.filter((i) => i.status !== 'completed'));
-        addToast('Cleared completed downloads');
+        onClearCompleted();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onToggleShortcuts, onCloseOverlays, onToggleSettings, setItems, addToast]);
+  }, [onToggleShortcuts, onCloseOverlays, onToggleSettings, onClearCompleted]);
 };

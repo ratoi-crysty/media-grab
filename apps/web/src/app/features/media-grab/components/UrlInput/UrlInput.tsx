@@ -7,30 +7,38 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
 } from 'react';
-import type { AddItemInput } from '../../types';
+import type { AddItemInput, Format, Quality } from '../../types';
+import { usePreview } from '../../../../shared/api/api.hooks';
 import { detectPlatform, isValidUrl, PLATFORMS } from '../../utils/platform';
 import { Icons } from '../Icon/Icon';
 import { PlatformGlyph } from '../PlatformGlyph/PlatformGlyph';
 
 export interface UrlInputProps {
-  onAdd: (item: AddItemInput) => void;
+  onAdd: (item: AddItemInput) => void | Promise<void>;
+  prefillUrl?: string | null;
 }
 
-export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
-  const [value, setValue] = useState('');
-  const [advanced, setAdvanced] = useState(false);
-  const [format, setFormat] = useState('best');
-  const [quality, setQuality] = useState('1080p');
-  const [subs, setSubs] = useState(false);
-  const [subLang, setSubLang] = useState('en');
-  const [filenameTpl, setFilenameTpl] = useState(
-    '%(uploader)s - %(title)s.%(ext)s',
-  );
+export const UrlInput = memo(function UrlInput({
+  onAdd,
+  prefillUrl,
+}: UrlInputProps) {
+  const [value, setValue] = useState<string>('');
+
+  useEffect(() => {
+    if (prefillUrl) setValue(prefillUrl);
+  }, [prefillUrl]);
+  const [advanced, setAdvanced] = useState<boolean>(false);
+  const [format, setFormat] = useState<Format>('best');
+  const [quality, setQuality] = useState<Quality>('1080p');
+  const [submitting, setSubmitting] = useState<boolean>(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const platform = detectPlatform(value);
-  const valid = isValidUrl(value);
-  const trimmed = value.trim();
+  const valid: boolean = isValidUrl(value);
+  const trimmed: string = value.trim();
+
+  const { preview, isLoading: previewLoading, error: previewError } =
+    usePreview(valid ? trimmed : '');
 
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -49,23 +57,22 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const submit = useCallback(() => {
-    if (!valid) return;
-    onAdd({
-      url: trimmed,
-      platform,
-      format,
-      quality,
-      subs,
-      subLang,
-      filenameTpl,
-    });
-    setValue('');
-  }, [valid, onAdd, trimmed, platform, format, quality, subs, subLang, filenameTpl]);
+  const canSubmit: boolean = valid && !!preview && !submitting;
+
+  const submit = useCallback(async (): Promise<void> => {
+    if (!canSubmit) return;
+    setSubmitting(true);
+    try {
+      await onAdd({ url: trimmed, format, quality });
+      setValue('');
+    } finally {
+      setSubmitting(false);
+    }
+  }, [canSubmit, onAdd, trimmed, format, quality]);
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') submit();
+      if (e.key === 'Enter') void submit();
     },
     [submit],
   );
@@ -77,6 +84,8 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
 
   const clear = useCallback(() => setValue(''), []);
   const toggleAdvanced = useCallback(() => setAdvanced((v) => !v), []);
+
+  const audioOnly: boolean = format === 'mp3' || format === 'm4a';
 
   return (
     <section className="mg-url">
@@ -109,11 +118,11 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
         </div>
         <button
           className="mg-btn-primary mg-url-add"
-          onClick={submit}
-          disabled={!valid}
+          onClick={(): void => void submit()}
+          disabled={!canSubmit}
         >
           <Icons.Plus size={16} />
-          Add to Queue
+          {submitting ? 'Adding…' : 'Add to Queue'}
         </button>
       </div>
 
@@ -143,6 +152,52 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
         )}
       </div>
 
+      {valid && (previewLoading || preview || previewError) && (
+        <div className="mg-preview">
+          {previewLoading && (
+            <div className="mg-preview-loading mg-muted">
+              <Icons.Globe size={13} /> Fetching preview…
+            </div>
+          )}
+          {preview && (
+            <div className="mg-preview-card">
+              {preview.thumbnailUrl ? (
+                <img
+                  className="mg-preview-thumb"
+                  src={preview.thumbnailUrl}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="mg-preview-thumb mg-preview-thumb--empty" />
+              )}
+              <div className="mg-preview-info">
+                <div className="mg-preview-title" title={preview.title}>
+                  {preview.title}
+                </div>
+                <div className="mg-preview-meta mg-muted">
+                  <span>{preview.uploader}</span>
+                  <span className="mg-dot-sep">·</span>
+                  <span className="mg-mono">{preview.duration}</span>
+                  <span className="mg-dot-sep">·</span>
+                  <span className="mg-mono">{preview.platform}</span>
+                </div>
+              </div>
+            </div>
+          )}
+          {previewError && (
+            <div className="mg-preview-error">
+              <Icons.AlertCircle size={13} /> {previewError.message}
+              {previewError.errorDetail && (
+                <div className="mg-mono mg-muted mg-preview-error-detail">
+                  {previewError.errorDetail}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {advanced && (
         <div className="mg-advanced">
           <div className="mg-adv-grid">
@@ -151,13 +206,12 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
               <select
                 className="mg-select"
                 value={format}
-                onChange={(e) => setFormat(e.target.value)}
+                onChange={(e) => setFormat(e.target.value as Format)}
               >
                 <option value="best">Best available (video + audio)</option>
                 <option value="mp4">MP4 (H.264)</option>
                 <option value="mp3">MP3 — audio only</option>
                 <option value="m4a">M4A — audio only</option>
-                <option value="custom">Custom yt-dlp format string…</option>
               </select>
             </label>
 
@@ -165,9 +219,9 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
               <span className="mg-field-label">Quality</span>
               <select
                 className="mg-select"
-                value={quality}
-                onChange={(e) => setQuality(e.target.value)}
-                disabled={format === 'mp3' || format === 'm4a'}
+                value={audioOnly ? 'audio' : quality}
+                onChange={(e) => setQuality(e.target.value as Quality)}
+                disabled={audioOnly}
               >
                 <option value="2160p">2160p (4K)</option>
                 <option value="1440p">1440p (2K)</option>
@@ -176,45 +230,6 @@ export const UrlInput = memo(function UrlInput({ onAdd }: UrlInputProps) {
                 <option value="480p">480p</option>
                 <option value="audio">Audio only</option>
               </select>
-            </label>
-
-            <label className="mg-field mg-field--check">
-              <span className="mg-field-label">Subtitles</span>
-              <div className="mg-check-row">
-                <label className="mg-toggle">
-                  <input
-                    type="checkbox"
-                    checked={subs}
-                    onChange={(e) => setSubs(e.target.checked)}
-                  />
-                  <span className="mg-toggle-track">
-                    <span className="mg-toggle-dot" />
-                  </span>
-                </label>
-                <select
-                  className="mg-select mg-select--inline"
-                  value={subLang}
-                  onChange={(e) => setSubLang(e.target.value)}
-                  disabled={!subs}
-                >
-                  <option value="en">English</option>
-                  <option value="es">Español</option>
-                  <option value="fr">Français</option>
-                  <option value="de">Deutsch</option>
-                  <option value="ja">日本語</option>
-                  <option value="all">All available</option>
-                </select>
-              </div>
-            </label>
-
-            <label className="mg-field mg-field--wide">
-              <span className="mg-field-label">Output template</span>
-              <input
-                className="mg-input mg-mono"
-                value={filenameTpl}
-                onChange={(e) => setFilenameTpl(e.target.value)}
-                spellCheck={false}
-              />
             </label>
           </div>
         </div>

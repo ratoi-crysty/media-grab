@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { BulkBar } from './components/BulkBar/BulkBar';
 import { DropOverlay } from './components/DropOverlay/DropOverlay';
 import { EmptyState } from './components/EmptyState/EmptyState';
@@ -9,62 +16,47 @@ import { ShortcutsModal } from './components/ShortcutsModal/ShortcutsModal';
 import { Tabs } from './components/Tabs/Tabs';
 import { Toasts } from './components/Toasts/Toasts';
 import { UrlInput } from './components/UrlInput/UrlInput';
-import { useDownloadSimulation } from './hooks/useDownloadSimulation';
 import { useDragAndDrop } from './hooks/useDragAndDrop';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useThemeVars } from './hooks/useThemeVars';
+import {
+  useDownloadActions,
+  useDownloads,
+} from '../../shared/api/api.hooks';
 import type {
   AddItemInput,
   BulkAction,
   Density,
-  DownloadItem,
+  Download,
   FilterId,
   ItemAction,
-  Platform,
   StatusCounts,
   Toast,
 } from './types';
-import { initialItemsMixed } from './utils/samples';
 import './styles.scss';
 
 const SORT_ORDER: Record<string, number> = {
   downloading: 0,
-  paused: 1,
-  queued: 2,
-  failed: 3,
-  completed: 4,
+  queued: 1,
+  failed: 2,
+  completed: 3,
 };
 
-const SYNTH_TITLES = [
-  'New video from clipboard — fetching metadata…',
-  'Untitled stream',
-  'Live capture',
-  'Recently added video',
-];
-
-const RESOLVED_TITLES = [
-  'A wonderful video about something interesting',
-  'Untitled · Resolved from URL',
-  'Latest upload — Click to preview',
-];
-
-const RESOLVED_UPLOADERS = ['Channel name', 'creator.handle', 'Studio'];
-
-const pickRandom = <T,>(arr: readonly T[]): T =>
-  arr[Math.floor(Math.random() * arr.length)] as T;
-
 export const MediaGrab = memo(function MediaGrab() {
-  const [items, setItems] = useState<DownloadItem[]>(() => initialItemsMixed());
+  const { downloads, isLoading, error } = useDownloads();
+  const actions = useDownloadActions();
+
   const [filter, setFilter] = useState<FilterId>('all');
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState<string>('');
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const [dark, setDark] = useState(true);
+  const [shortcutsOpen, setShortcutsOpen] = useState<boolean>(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [dragOver, setDragOver] = useState<boolean>(false);
+  const [dark, setDark] = useState<boolean>(true);
   const [density, setDensity] = useState<Density>('comfy');
-  const [accent] = useState('#5b8cff');
+  const [accent] = useState<string>('#5b8cff');
+  const [prefillUrl, setPrefillUrl] = useState<string | null>(null);
 
   useThemeVars(accent, dark);
 
@@ -75,12 +67,29 @@ export const MediaGrab = memo(function MediaGrab() {
     ]);
   }, []);
 
-  const pushSimpleToast = useCallback(
-    (title: string) => pushToast({ title }),
-    [pushToast],
-  );
-
-  useDownloadSimulation(items, setItems, setToasts);
+  const prevStatusesRef = useRef<Map<string, Download['status']>>(new Map());
+  useEffect(() => {
+    const next: Map<string, Download['status']> = new Map();
+    for (const d of downloads) {
+      next.set(d.id, d.status);
+      const before = prevStatusesRef.current.get(d.id);
+      if (before && before !== 'completed' && d.status === 'completed') {
+        pushToast({ kind: 'ok', title: 'Download complete', sub: d.title });
+      } else if (
+        before &&
+        before !== 'failed' &&
+        d.status === 'failed' &&
+        d.error !== 'Cancelled by user'
+      ) {
+        pushToast({
+          kind: 'err',
+          title: 'Download failed',
+          sub: d.error ?? d.title,
+        });
+      }
+    }
+    prevStatusesRef.current = next;
+  }, [downloads, pushToast]);
 
   useEffect(() => {
     if (!toasts.length) return undefined;
@@ -88,10 +97,7 @@ export const MediaGrab = memo(function MediaGrab() {
     return () => clearTimeout(tm);
   }, [toasts]);
 
-  const toggleShortcuts = useCallback(
-    () => setShortcutsOpen((s) => !s),
-    [],
-  );
+  const toggleShortcuts = useCallback(() => setShortcutsOpen((s) => !s), []);
   const toggleSettings = useCallback(() => setSettingsOpen((s) => !s), []);
   const closeOverlays = useCallback(() => {
     setShortcutsOpen(false);
@@ -104,119 +110,67 @@ export const MediaGrab = memo(function MediaGrab() {
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const toggleTheme = useCallback(() => setDark((d) => !d), []);
 
+  const handleAdd = useCallback(
+    async ({ url, format, quality }: AddItemInput): Promise<void> => {
+      try {
+        await actions.add({ url, format, quality });
+        pushToast({ title: 'Added to queue', sub: url });
+        setPrefillUrl(null);
+      } catch (err: unknown) {
+        pushToast({
+          kind: 'err',
+          title: 'Failed to add',
+          sub: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [actions, pushToast],
+  );
+
+  const handleAction = useCallback(
+    async (id: string, action: ItemAction): Promise<void> => {
+      try {
+        if (action === 'cancel') {
+          await actions.cancel(id);
+        } else if (action === 'retry') {
+          await actions.retry(id);
+          pushToast({ title: 'Retrying download' });
+        } else if (action === 'remove') {
+          await actions.remove(id);
+          setSelected((s) => {
+            const n = new Set(s);
+            n.delete(id);
+            return n;
+          });
+        }
+      } catch (err: unknown) {
+        pushToast({
+          kind: 'err',
+          title: `${action} failed`,
+          sub: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [actions, pushToast],
+  );
+
+  const clearCompleted = useCallback(async (): Promise<void> => {
+    const completed: Download[] = downloads.filter(
+      (d: Download): boolean => d.status === 'completed',
+    );
+    if (completed.length === 0) return;
+    await Promise.all(
+      completed.map((d: Download): Promise<void> => actions.remove(d.id)),
+    );
+    pushToast({ title: `Cleared ${completed.length} completed downloads` });
+  }, [downloads, actions, pushToast]);
+
   useGlobalShortcuts({
     onToggleShortcuts: toggleShortcuts,
     onCloseOverlays: closeOverlays,
     onToggleSettings: toggleSettings,
-    setItems,
-    addToast: pushSimpleToast,
+    onClearCompleted: (): void => void clearCompleted(),
   });
-
-  const handleAdd = useCallback(
-    ({ url, platform, format, quality }: AddItemInput) => {
-      const hue = Math.floor(Math.random() * 360);
-      const resolvedPlatform: Platform = platform ?? 'youtube';
-      const isAudio = format === 'mp3' || format === 'm4a';
-      const newItem: DownloadItem = {
-        id: `n-${Date.now()}`,
-        url,
-        platform: resolvedPlatform,
-        title: pickRandom(SYNTH_TITLES),
-        uploader: 'Resolving…',
-        duration: '—:—',
-        format: isAudio ? format.toUpperCase() : 'MP4',
-        quality: isAudio ? '320kbps' : quality,
-        size: 100_000_000 + Math.random() * 400_000_000,
-        status: 'queued',
-        downloaded: 0,
-        speed: 0,
-        hue,
-      };
-      setItems((prev) => [newItem, ...prev]);
-      pushToast({ title: 'Added to queue', sub: url });
-      setTimeout(() => {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === newItem.id
-              ? {
-                  ...i,
-                  title: pickRandom(RESOLVED_TITLES),
-                  uploader: pickRandom(RESOLVED_UPLOADERS),
-                  duration: `${Math.floor(Math.random() * 30) + 1}:${String(
-                    Math.floor(Math.random() * 60),
-                  ).padStart(2, '0')}`,
-                }
-              : i,
-          ),
-        );
-      }, 1500);
-      setTimeout(() => {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === newItem.id
-              ? {
-                  ...i,
-                  status: 'downloading',
-                  speed: 2_000_000 + Math.random() * 3_000_000,
-                }
-              : i,
-          ),
-        );
-      }, 2500);
-    },
-    [pushToast],
-  );
-
-  const handleAction = useCallback(
-    (id: string, action: ItemAction) => {
-      if (action === 'pause') {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === id ? { ...i, status: 'paused', speed: 0 } : i,
-          ),
-        );
-      } else if (
-        action === 'resume' ||
-        action === 'start' ||
-        action === 'retry'
-      ) {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === id
-              ? {
-                  ...i,
-                  status: 'downloading',
-                  speed: 2_000_000 + Math.random() * 3_000_000,
-                  downloaded: action === 'retry' ? 0 : i.downloaded,
-                  error: undefined,
-                }
-              : i,
-          ),
-        );
-        if (action === 'retry') pushToast({ title: 'Retrying download' });
-      } else if (action === 'cancel') {
-        setItems((prev) =>
-          prev.map((i) =>
-            i.id === id
-              ? { ...i, status: 'failed', speed: 0, error: 'Cancelled by user' }
-              : i,
-          ),
-        );
-      } else if (action === 'remove') {
-        setItems((prev) => prev.filter((i) => i.id !== id));
-        setSelected((s) => {
-          const n = new Set(s);
-          n.delete(id);
-          return n;
-        });
-      } else if (action === 'open' || action === 'play') {
-        pushToast({
-          title: action === 'open' ? 'Opening file location' : 'Opening file',
-        });
-      }
-    },
-    [pushToast],
-  );
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
@@ -228,59 +182,72 @@ export const MediaGrab = memo(function MediaGrab() {
   }, []);
 
   const handleBulk = useCallback(
-    (action: BulkAction) => {
+    async (action: BulkAction): Promise<void> => {
+      const ids: string[] = Array.from(selected);
+      if (ids.length === 0) return;
       if (action === 'remove') {
-        setItems((prev) => prev.filter((i) => !selected.has(i.id)));
-        pushToast({ title: `Removed ${selected.size} items` });
+        await Promise.all(
+          ids.map((id: string): Promise<void> => actions.remove(id)),
+        );
+        pushToast({ title: `Removed ${ids.length} items` });
         setSelected(new Set());
         return;
       }
-      selected.forEach((id) => handleAction(id, action));
+      if (action === 'retry') {
+        await Promise.all(
+          ids.map(async (id: string): Promise<void> => {
+            const row: Download | undefined = downloads.find(
+              (d: Download): boolean => d.id === id,
+            );
+            if (row?.status === 'failed') await actions.retry(id);
+          }),
+        );
+        pushToast({ title: `Retrying ${ids.length} downloads` });
+      }
     },
-    [selected, pushToast, handleAction],
+    [selected, actions, downloads, pushToast],
   );
 
   const counts = useMemo<StatusCounts>(() => {
     const c: StatusCounts = {
-      all: items.length,
+      all: downloads.length,
       downloading: 0,
       queued: 0,
       completed: 0,
       failed: 0,
-      paused: 0,
     };
-    items.forEach((i) => {
-      c[i.status] = (c[i.status] ?? 0) + 1;
-    });
-    c.downloading += c.paused;
+    for (const d of downloads) {
+      const k: keyof StatusCounts = d.status;
+      c[k] = (c[k] ?? 0) + 1;
+    }
     return c;
-  }, [items]);
+  }, [downloads]);
 
-  const visible = useMemo<DownloadItem[]>(() => {
-    let r = items;
+  const visible = useMemo<Download[]>(() => {
+    let r: Download[] = downloads;
     if (filter !== 'all') {
-      r = r.filter(
-        (i) =>
-          i.status === filter ||
-          (filter === 'downloading' && i.status === 'paused'),
-      );
+      r = r.filter((d: Download): boolean => d.status === filter);
     }
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const q: string = search.toLowerCase();
       r = r.filter(
-        (i) =>
-          i.title.toLowerCase().includes(q) ||
-          i.uploader.toLowerCase().includes(q),
+        (d: Download): boolean =>
+          d.title.toLowerCase().includes(q) ||
+          d.uploader.toLowerCase().includes(q),
       );
     }
     return [...r].sort(
-      (a, b) => (SORT_ORDER[a.status] ?? 9) - (SORT_ORDER[b.status] ?? 9),
+      (a: Download, b: Download): number =>
+        (SORT_ORDER[a.status] ?? 9) - (SORT_ORDER[b.status] ?? 9),
     );
-  }, [items, filter, search]);
+  }, [downloads, filter, search]);
 
-  const downloadingCount = items.filter(
-    (i) => i.status === 'downloading',
-  ).length;
+  const downloadingCount: number = useMemo(
+    (): number =>
+      downloads.filter((d: Download): boolean => d.status === 'downloading')
+        .length,
+    [downloads],
+  );
 
   const onDropError = useCallback(() => {
     pushToast({
@@ -290,7 +257,11 @@ export const MediaGrab = memo(function MediaGrab() {
     });
   }, [pushToast]);
 
-  useDragAndDrop({ setDragOver, onAdd: handleAdd, onError: onDropError });
+  const onDropUrl = useCallback((url: string): void => {
+    setPrefillUrl(url);
+  }, []);
+
+  useDragAndDrop({ setDragOver, onDropUrl, onError: onDropError });
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
   const dismissToast = useCallback(
@@ -308,13 +279,13 @@ export const MediaGrab = memo(function MediaGrab() {
         dark={dark}
         onToggleTheme={toggleTheme}
         downloadingCount={downloadingCount}
-        totalCount={items.length}
+        totalCount={downloads.length}
         onShowShortcuts={openShortcuts}
         onShowSettings={openSettings}
       />
 
       <main className="mg-main">
-        <UrlInput onAdd={handleAdd} />
+        <UrlInput onAdd={handleAdd} prefillUrl={prefillUrl} />
 
         <Tabs
           counts={counts}
@@ -326,17 +297,27 @@ export const MediaGrab = memo(function MediaGrab() {
           onDensity={setDensity}
         />
 
-        {visible.length === 0 ? (
+        {isLoading && downloads.length === 0 ? (
+          <div className="mg-muted" style={{ padding: 24 }}>
+            Loading…
+          </div>
+        ) : error ? (
+          <div className="mg-status-line mg-status-line--err" style={{ padding: 24 }}>
+            Failed to load: {error.message}
+          </div>
+        ) : visible.length === 0 ? (
           <EmptyState filter={filter} />
         ) : (
           <div className="mg-list" data-show-thumbs="1">
-            {visible.map((item) => (
+            {visible.map((item: Download) => (
               <ItemRow
                 key={item.id}
                 item={item}
                 selected={selected.has(item.id)}
                 onSelect={toggleSelect}
-                onAction={handleAction}
+                onAction={(id: string, action: ItemAction): void =>
+                  void handleAction(id, action)
+                }
                 density={density}
               />
             ))}
@@ -347,7 +328,7 @@ export const MediaGrab = memo(function MediaGrab() {
       {selected.size > 0 && (
         <BulkBar
           count={selected.size}
-          onAction={handleBulk}
+          onAction={(a: BulkAction): void => void handleBulk(a)}
           onClear={clearSelection}
         />
       )}

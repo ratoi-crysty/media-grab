@@ -1,13 +1,13 @@
 import { memo, useCallback, useState } from 'react';
-import type { Density, DownloadItem, ItemAction } from '../../types';
+import type { Density, Download, ItemAction } from '../../types';
 import { fmtBytes, fmtEta, fmtRelative, fmtSpeed } from '../../utils/format';
-import { PLATFORMS } from '../../utils/platform';
+import { platformMeta } from '../../utils/platform';
 import { thumbSvg } from '../../utils/thumb';
 import { Icons } from '../Icon/Icon';
 import { PlatformGlyph } from '../PlatformGlyph/PlatformGlyph';
 
 export interface ItemRowProps {
-  item: DownloadItem;
+  item: Download;
   selected: boolean;
   onSelect: (id: string) => void;
   onAction: (id: string, action: ItemAction) => void;
@@ -21,20 +21,23 @@ export const ItemRow = memo(function ItemRow({
   onAction,
   density,
 }: ItemRowProps) {
-  const pct = item.size ? Math.min(100, (item.downloaded / item.size) * 100) : 0;
-  const eta = item.speed ? (item.size - item.downloaded) / item.speed : null;
-  const platMeta = PLATFORMS[item.platform] ?? { name: 'Web', color: '#888' };
-  const [showErr, setShowErr] = useState(false);
+  const pct: number = item.size
+    ? Math.min(100, (item.downloaded / item.size) * 100)
+    : 0;
+  const platMeta = platformMeta(item.platform);
+  const [showErr, setShowErr] = useState<boolean>(false);
 
-  const isActive = item.status === 'downloading';
-  const isCompleted = item.status === 'completed';
-  const isFailed = item.status === 'failed';
-  const isQueued = item.status === 'queued';
-  const isPaused = item.status === 'paused';
+  const isActive: boolean = item.status === 'downloading';
+  const isCompleted: boolean = item.status === 'completed';
+  const isFailed: boolean = item.status === 'failed';
+  const isQueued: boolean = item.status === 'queued';
+
+  const speed: number = 0;
+  const eta: number | null = null;
 
   const toggle = useCallback(() => onSelect(item.id), [item.id, onSelect]);
   const act = useCallback(
-    (action: ItemAction) => onAction(item.id, action),
+    (action: ItemAction): void => onAction(item.id, action),
     [item.id, onAction],
   );
 
@@ -90,11 +93,11 @@ export const ItemRow = memo(function ItemRow({
           )}
         </div>
 
-        {(isActive || isPaused) && (
+        {isActive && (
           <div className="mg-progress-block">
-            <div className={`mg-progress ${isPaused ? 'is-paused' : ''}`}>
+            <div className="mg-progress">
               <div className="mg-progress-bar" style={{ width: `${pct}%` }}>
-                {isActive && <div className="mg-progress-shimmer" />}
+                <div className="mg-progress-shimmer" />
               </div>
             </div>
             <div className="mg-progress-stats mg-mono">
@@ -103,16 +106,8 @@ export const ItemRow = memo(function ItemRow({
                 {fmtBytes(item.downloaded)} / {fmtBytes(item.size)}
               </span>
               <span className="mg-spacer" />
-              {isActive ? (
-                <>
-                  <span className="mg-progress-speed">
-                    {fmtSpeed(item.speed)}
-                  </span>
-                  <span className="mg-muted">ETA {fmtEta(eta)}</span>
-                </>
-              ) : (
-                <span className="mg-muted">Paused</span>
-              )}
+              <span className="mg-progress-speed">{fmtSpeed(speed)}</span>
+              <span className="mg-muted">ETA {fmtEta(eta)}</span>
             </div>
           </div>
         )}
@@ -120,9 +115,7 @@ export const ItemRow = memo(function ItemRow({
         {isQueued && (
           <div className="mg-status-line">
             <span className="mg-status-dot" />
-            <span className="mg-muted">
-              Waiting in queue · position #{item.queuePosition ?? '—'}
-            </span>
+            <span className="mg-muted">Waiting in queue</span>
           </div>
         )}
 
@@ -131,7 +124,9 @@ export const ItemRow = memo(function ItemRow({
             <Icons.CheckCircle size={13} style={{ color: 'var(--ok)' }} />
             <span className="mg-muted">
               Saved to{' '}
-              <span className="mg-mono mg-path">~/Downloads/MediaGrab</span>
+              <span className="mg-mono mg-path">
+                {item.filePath ?? '~/Downloads/MediaGrab'}
+              </span>
             </span>
           </div>
         )}
@@ -154,33 +149,6 @@ export const ItemRow = memo(function ItemRow({
       </div>
 
       <div className="mg-item-actions">
-        {isActive && (
-          <button
-            className="mg-action"
-            onClick={() => act('pause')}
-            title="Pause"
-          >
-            <Icons.Pause size={14} />
-          </button>
-        )}
-        {isPaused && (
-          <button
-            className="mg-action mg-action--primary"
-            onClick={() => act('resume')}
-            title="Resume"
-          >
-            <Icons.Play size={13} />
-          </button>
-        )}
-        {isQueued && (
-          <button
-            className="mg-action mg-action--primary"
-            onClick={() => act('start')}
-            title="Start now"
-          >
-            <Icons.Play size={13} />
-          </button>
-        )}
         {isFailed && (
           <button
             className="mg-action mg-action--primary"
@@ -190,25 +158,7 @@ export const ItemRow = memo(function ItemRow({
             <Icons.RotateCw size={14} />
           </button>
         )}
-        {isCompleted && (
-          <>
-            <button
-              className="mg-action"
-              onClick={() => act('open')}
-              title="Open file location"
-            >
-              <Icons.Folder size={14} />
-            </button>
-            <button
-              className="mg-action"
-              onClick={() => act('play')}
-              title="Open file"
-            >
-              <Icons.ExternalLink size={14} />
-            </button>
-          </>
-        )}
-        {(isActive || isQueued || isPaused) && (
+        {(isActive || isQueued) && (
           <button
             className="mg-action"
             onClick={() => act('cancel')}

@@ -1,4 +1,18 @@
-export type Platform =
+import type {
+  DownloadFormat,
+  DownloadModel,
+  DownloadPreviewModel,
+  DownloadQuality,
+  DownloadStatus,
+} from '@media-grab/common';
+
+export type Download = DownloadModel;
+export type Preview = DownloadPreviewModel;
+export type Format = DownloadFormat;
+export type Quality = DownloadQuality;
+export type ItemStatus = DownloadStatus;
+
+export type KnownPlatform =
   | 'youtube'
   | 'vimeo'
   | 'tiktok'
@@ -6,36 +20,9 @@ export type Platform =
   | 'soundcloud'
   | 'twitter';
 
-export type ItemStatus =
-  | 'downloading'
-  | 'queued'
-  | 'completed'
-  | 'failed'
-  | 'paused';
-
 export type Density = 'compact' | 'comfy';
 
 export type FilterId = 'all' | 'downloading' | 'queued' | 'completed' | 'failed';
-
-export interface DownloadItem {
-  id: string;
-  platform: Platform;
-  title: string;
-  uploader: string;
-  duration: string;
-  format: string;
-  quality: string;
-  size: number;
-  status: ItemStatus;
-  downloaded: number;
-  speed: number;
-  hue: number;
-  url: string;
-  completedAt?: number;
-  error?: string;
-  errorDetail?: string;
-  queuePosition?: number;
-}
 
 export interface Toast {
   id: string;
@@ -46,25 +33,13 @@ export interface Toast {
 
 export interface AddItemInput {
   url: string;
-  platform: Platform | null;
-  format: string;
-  quality: string;
-  subs?: boolean;
-  subLang?: string;
-  filenameTpl?: string;
+  format: Format;
+  quality: Quality;
 }
 
-export type ItemAction =
-  | 'pause'
-  | 'resume'
-  | 'start'
-  | 'retry'
-  | 'cancel'
-  | 'remove'
-  | 'open'
-  | 'play';
+export type ItemAction = 'retry' | 'cancel' | 'remove';
 
-export type BulkAction = 'pause' | 'resume' | 'retry' | 'remove';
+export type BulkAction = 'retry' | 'remove';
 
 export interface StatusCounts {
   all: number;
@@ -72,5 +47,4 @@ export interface StatusCounts {
   queued: number;
   completed: number;
   failed: number;
-  paused: number;
 }

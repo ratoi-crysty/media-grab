@@ -13,6 +13,13 @@ module.exports = {
       disableDotRule: true,
       htmlAcceptHeaders: ['text/html', 'application/xhtml+xml'],
     },
+    proxy: [
+      {
+        context: ['/api', '/docs'],
+        target: 'http://localhost:3000',
+        changeOrigin: false,
+      },
+    ],
   },
   plugins: [
     new NxAppRspackPlugin({

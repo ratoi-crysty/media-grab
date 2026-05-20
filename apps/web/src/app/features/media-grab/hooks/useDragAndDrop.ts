@@ -1,15 +1,14 @@
 import { useEffect } from 'react';
-import type { AddItemInput } from '../types';
-import { detectPlatform, isValidUrl } from '../utils/platform';
+import { isValidUrl } from '../utils/platform';
 
 export interface DragAndDropHandlers {
   setDragOver: (over: boolean) => void;
-  onAdd: (item: AddItemInput) => void;
+  onDropUrl: (url: string) => void;
   onError: () => void;
 }
 
 export const useDragAndDrop = (h: DragAndDropHandlers): void => {
-  const { setDragOver, onAdd, onError } = h;
+  const { setDragOver, onDropUrl, onError } = h;
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
@@ -27,12 +26,7 @@ export const useDragAndDrop = (h: DragAndDropHandlers): void => {
         e.dataTransfer?.getData('text/plain') ||
         '';
       if (url && isValidUrl(url)) {
-        onAdd({
-          url,
-          platform: detectPlatform(url),
-          format: 'best',
-          quality: '1080p',
-        });
+        onDropUrl(url);
       } else {
         onError();
       }
@@ -45,5 +39,5 @@ export const useDragAndDrop = (h: DragAndDropHandlers): void => {
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
     };
-  }, [setDragOver, onAdd, onError]);
+  }, [setDragOver, onDropUrl, onError]);
 };

@@ -1,8 +1,7 @@
 import { memo } from 'react';
-import type { Platform } from '../../types';
 
 export interface PlatformGlyphProps {
-  platform: Platform | null;
+  platform: string | null;
   size?: number;
 }
 

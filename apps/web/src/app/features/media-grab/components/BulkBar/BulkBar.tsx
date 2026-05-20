@@ -24,12 +24,6 @@ export const BulkBar = memo(function BulkBar({
         </button>
       </div>
       <div className="mg-bulk-actions">
-        <button className="mg-btn-ghost" onClick={() => onAction('pause')}>
-          <Icons.Pause size={13} /> Pause
-        </button>
-        <button className="mg-btn-ghost" onClick={() => onAction('resume')}>
-          <Icons.Play size={13} /> Resume
-        </button>
         <button className="mg-btn-ghost" onClick={() => onAction('retry')}>
           <Icons.RotateCw size={13} /> Retry
         </button>
