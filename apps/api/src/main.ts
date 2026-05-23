@@ -5,7 +5,7 @@ import { AppModule } from './app/app.module';
 
 async function bootstrap(): Promise<void> {
   const app: INestApplication = await NestFactory.create(AppModule);
-  const globalPrefix: string = 'api';
+  const globalPrefix = 'api';
   app.setGlobalPrefix(globalPrefix);
   app.useGlobalPipes(
     new ValidationPipe({
@@ -20,11 +20,17 @@ async function bootstrap(): Promise<void> {
     .setDescription('Local media download API powered by yt-dlp')
     .setVersion('0.1.0')
     .build();
-  SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+  SwaggerModule.setup(
+    'docs',
+    app,
+    SwaggerModule.createDocument(app, swaggerConfig),
+  );
 
   const port: string | number = process.env['PORT'] ?? 3000;
   await app.listen(port);
-  Logger.log(`🚀 Application is running on: http://localhost:${port}/${globalPrefix}`);
+  Logger.log(
+    `🚀 Application is running on: http://localhost:${port}/${globalPrefix}`,
+  );
   Logger.log(`📚 Swagger docs available at: http://localhost:${port}/docs`);
 }
 

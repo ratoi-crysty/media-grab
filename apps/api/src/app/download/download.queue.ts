@@ -4,7 +4,7 @@ import {
   Logger,
   OnApplicationBootstrap,
 } from '@nestjs/common';
-import { ConfigType } from '@nestjs/config';
+import type { ConfigType } from '@nestjs/config';
 import { rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { appConfig } from '../config/app.config';
@@ -26,7 +26,7 @@ import type {
 
 export interface RunningJob {
   readonly id: string;
-  readonly handle: SpawnHandle;
+  handle: SpawnHandle;
   downloaded: number;
   total: number;
   speed: number;
@@ -36,8 +36,8 @@ export interface RunningJob {
 export class DownloadQueueService implements OnApplicationBootstrap {
   private readonly logger: Logger = new Logger(DownloadQueueService.name);
   private readonly running: Map<string, RunningJob> = new Map();
-  private draining: boolean = false;
-  private bootReconciled: boolean = false;
+  private draining = false;
+  private bootReconciled = false;
 
   constructor(
     private readonly repo: DownloadRepository,
@@ -101,7 +101,7 @@ export class DownloadQueueService implements OnApplicationBootstrap {
     input: CreateDownloadInput,
     preview: DownloadPreviewModel,
   ): Promise<DownloadEntity> {
-    const id: string = `d-${randomUUID()}`;
+    const id = `d-${randomUUID()}`;
     const insertInput: DownloadInsertInput = {
       id,
       url: input.url,

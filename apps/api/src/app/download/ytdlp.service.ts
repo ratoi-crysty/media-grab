@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ChildProcess, spawn, spawnSync, SpawnSyncReturns } from 'node:child_process';
-import { helpers, stringToProgress, VideoInfo, VideoProgress, YtDlp } from 'ytdlp-nodejs';
+import { spawnSync, SpawnSyncReturns } from 'node:child_process';
+import youtubeDl from 'youtube-dl-exec';
+import type { Flags, Payload } from 'youtube-dl-exec';
 import type {
   DownloadFormat,
   DownloadPreviewModel,
@@ -8,7 +9,9 @@ import type {
 } from '@media-grab/common';
 import { mapToYtDlpFormat, YtDlpFormatArgs } from './format-mapper';
 
-const FILEPATH_MARKER: string = '[MEDIA-GRAB-FILEPATH]';
+const FILEPATH_MARKER = '[MEDIA-GRAB-FILEPATH]';
+const PROGRESS_MARKER = '[MEDIA-GRAB-PROG]';
+const PROGRESS_TEMPLATE = `download:${PROGRESS_MARKER}%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s`;
 
 export interface SpawnInput {
   readonly url: string;
@@ -44,6 +47,21 @@ export interface InstallationStatus {
   readonly ffmpegAvailable: boolean;
 }
 
+interface TinyspawnSubprocess extends Promise<TinyspawnChild> {
+  readonly stdout: NodeJS.ReadableStream | null;
+  readonly stderr: NodeJS.ReadableStream | null;
+  kill(signal?: NodeJS.Signals): boolean;
+  killed: boolean;
+  exitCode: number | null;
+}
+
+interface TinyspawnChild {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
+}
+
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return '0:00';
   const total: number = Math.floor(seconds);
@@ -58,16 +76,30 @@ function formatDuration(seconds: number): string {
   return `${m}:${ss}`;
 }
 
+function toNum(v: string | undefined): number {
+  if (!v) return 0;
+  const n: number = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseProgress(line: string): SpawnProgress | null {
+  const idx: number = line.indexOf(PROGRESS_MARKER);
+  if (idx < 0) return null;
+  const payload: string = line.slice(idx + PROGRESS_MARKER.length).trim();
+  const parts: string[] = payload.split('|');
+  const downloaded: number = toNum(parts[0]);
+  const total: number = toNum(parts[1]) || toNum(parts[2]);
+  const speed: number = toNum(parts[3]);
+  return { downloaded, total, speed };
+}
+
 @Injectable()
 export class YtdlpService implements OnModuleInit {
   private readonly logger: Logger = new Logger(YtdlpService.name);
-  private ytdlp: YtDlp | null = null;
-  private binaryPath: string | null = null;
   private cachedVersion: string | null = null;
-  private cachedFfmpegAvailable: boolean = false;
+  private cachedFfmpegAvailable = false;
 
   async onModuleInit(): Promise<void> {
-    await this.ensureYtdlpBinary();
     await this.refreshInstallationStatus();
   }
 
@@ -79,10 +111,11 @@ export class YtdlpService implements OnModuleInit {
   }
 
   async getPreview(url: string): Promise<DownloadPreviewModel> {
-    if (!this.ytdlp) {
-      throw new Error('yt-dlp binary unavailable; preview cannot be fetched.');
-    }
-    const info: VideoInfo = await this.ytdlp.getInfoAsync<'video'>(url);
+    const info: Payload = (await youtubeDl(url, {
+      dumpSingleJson: true,
+      noWarnings: true,
+      skipDownload: true,
+    } as Flags)) as Payload;
     return {
       url,
       platform: info.extractor,
@@ -97,41 +130,35 @@ export class YtdlpService implements OnModuleInit {
     input: SpawnInput,
     onProgress: (p: SpawnProgress) => void,
   ): SpawnHandle {
-    if (!this.binaryPath) {
-      throw new Error('yt-dlp binary unavailable; spawn is not possible.');
-    }
     const formatArgs: YtDlpFormatArgs = mapToYtDlpFormat(input.format, input.quality);
-    const outputTemplate: string =
-      '%(extractor)s/%(uploader)s - %(title)s [%(id)s].%(ext)s';
-    const args: string[] = [
-      input.url,
-      '-f',
-      formatArgs.format,
-      '-o',
-      outputTemplate,
-      '-P',
-      input.downloadDir,
-      '--newline',
-      '--no-warnings',
-      '--no-overwrites',
-      '--print',
-      `after_move:${FILEPATH_MARKER}%(filepath)s`,
-    ];
+    const flags: Flags & Record<string, unknown> = {
+      format: formatArgs.format,
+      output: '%(extractor)s/%(uploader)s - %(title)s [%(id)s].%(ext)s',
+      paths: input.downloadDir,
+      newline: true,
+      noWarnings: true,
+      noOverwrites: true,
+      progressTemplate: PROGRESS_TEMPLATE,
+      print: `after_move:${FILEPATH_MARKER}%(filepath)s`,
+    };
     if (formatArgs.extractAudio && formatArgs.audioFormat) {
-      args.push('--extract-audio', '--audio-format', formatArgs.audioFormat);
+      flags.extractAudio = true;
+      flags.audioFormat = formatArgs.audioFormat;
     }
 
-    const child: ChildProcess = spawn(this.binaryPath, args);
-    let stderrBuf: string = '';
-    let stdoutBuf: string = '';
-    let filePath: string = '';
-    let lastTotal: number = 0;
-    let lastDownloaded: number = 0;
-    let killed: boolean = false;
+    const sub: TinyspawnSubprocess = youtubeDl.exec(
+      input.url,
+      flags as Flags,
+    ) as unknown as TinyspawnSubprocess;
 
-    child.stdout?.on('data', (chunk: Buffer): void => {
-      const text: string = chunk.toString();
-      stdoutBuf += text;
+    let stdoutBuf = '';
+    let filePath = '';
+    let lastTotal = 0;
+    let lastDownloaded = 0;
+    let killed = false;
+
+    sub.stdout?.on('data', (chunk: Buffer): void => {
+      stdoutBuf += chunk.toString();
       let nl: number = stdoutBuf.indexOf('\n');
       while (nl !== -1) {
         const line: string = stdoutBuf.slice(0, nl);
@@ -142,84 +169,69 @@ export class YtdlpService implements OnModuleInit {
           filePath = line.slice(markerIdx + FILEPATH_MARKER.length).trim();
           continue;
         }
-        const progress: VideoProgress | undefined = stringToProgress(line);
+        const progress: SpawnProgress | null = parseProgress(line);
         if (progress) {
-          const downloaded: number = progress.downloaded ?? lastDownloaded;
-          const total: number = progress.total ?? lastTotal;
-          lastDownloaded = downloaded;
-          if (total > 0) lastTotal = total;
-          onProgress({ downloaded, total: lastTotal, speed: progress.speed ?? 0 });
+          lastDownloaded = progress.downloaded || lastDownloaded;
+          if (progress.total > 0) lastTotal = progress.total;
+          onProgress({
+            downloaded: lastDownloaded,
+            total: lastTotal,
+            speed: progress.speed,
+          });
         }
       }
     });
 
-    child.stderr?.on('data', (chunk: Buffer): void => {
-      stderrBuf += chunk.toString();
-    });
-
-    const result: Promise<SpawnResult> = new Promise<SpawnResult>(
-      (resolve, reject) => {
-        child.on('error', (err: Error): void => reject(err));
-        child.on('close', (code: number | null): void => {
-          if (code === 0 && filePath) {
-            resolve({ filePath, size: lastTotal });
-            return;
-          }
-          const failure: SpawnFailure = {
-            exitCode: code,
-            stderr: stderrBuf.trim(),
-            killed,
-          };
-          const err: Error & { failure?: SpawnFailure } = new Error(
-            killed
-              ? 'Cancelled by user'
-              : `yt-dlp exited with code ${code}: ${stderrBuf.trim().split('\n').slice(-3).join(' ')}`,
-          );
-          err.failure = failure;
-          reject(err);
-        });
+    const result: Promise<SpawnResult> = sub.then(
+      (child: TinyspawnChild): SpawnResult => {
+        if (child.exitCode === 0 && filePath) {
+          return { filePath, size: lastTotal };
+        }
+        const failure: SpawnFailure = {
+          exitCode: child.exitCode,
+          stderr: (child.stderr ?? '').trim(),
+          killed,
+        };
+        const err: Error & { failure?: SpawnFailure } = new Error(
+          killed
+            ? 'Cancelled by user'
+            : `yt-dlp exited with code ${child.exitCode}: ${(child.stderr ?? '').trim().split('\n').slice(-3).join(' ')}`,
+        );
+        err.failure = failure;
+        throw err;
+      },
+      (err: unknown): never => {
+        const stderrText: string =
+          (err as { stderr?: string }).stderr?.trim() ??
+          (err instanceof Error ? err.message : String(err));
+        const failure: SpawnFailure = {
+          exitCode: (err as { exitCode?: number | null }).exitCode ?? null,
+          stderr: stderrText,
+          killed,
+        };
+        const wrapped: Error & { failure?: SpawnFailure } = new Error(
+          killed ? 'Cancelled by user' : stderrText.split('\n').slice(-3).join(' '),
+        );
+        wrapped.failure = failure;
+        throw wrapped;
       },
     );
 
     const kill = (): void => {
-      if (child.killed || child.exitCode !== null) return;
+      if (sub.killed || sub.exitCode !== null) return;
       killed = true;
-      child.kill('SIGTERM');
+      sub.kill('SIGTERM');
       setTimeout((): void => {
-        if (child.killed || child.exitCode !== null) return;
-        child.kill('SIGKILL');
+        if (sub.killed || sub.exitCode !== null) return;
+        sub.kill('SIGKILL');
       }, 3000).unref();
     };
 
     return { kill, result };
   }
 
-  private async ensureYtdlpBinary(): Promise<void> {
-    let path: string | undefined = helpers.findYtdlpBinary();
-    if (!path) {
-      this.logger.log('yt-dlp binary not found; downloading…');
-      try {
-        path = await helpers.downloadYtDlp();
-        this.logger.log(`yt-dlp binary downloaded to ${path}`);
-      } catch (err: unknown) {
-        this.logger.error(
-          `Failed to download yt-dlp binary: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        return;
-      }
-    }
-    this.binaryPath = path ?? null;
-    try {
-      this.ytdlp = new YtDlp({ binaryPath: path });
-    } catch (err: unknown) {
-      this.logger.error(
-        `Failed to construct YtDlp wrapper: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-
   private async refreshInstallationStatus(): Promise<void> {
-    this.cachedVersion = this.detectYtdlpVersion();
+    this.cachedVersion = await this.detectYtdlpVersion();
     this.cachedFfmpegAvailable = this.detectFfmpeg();
     if (this.cachedVersion) {
       this.logger.log(`yt-dlp version: ${this.cachedVersion}`);
@@ -231,25 +243,23 @@ export class YtdlpService implements OnModuleInit {
     );
   }
 
-  private detectYtdlpVersion(): string | null {
-    if (!this.binaryPath) return null;
+  private async detectYtdlpVersion(): Promise<string | null> {
     try {
-      const result: SpawnSyncReturns<string> = spawnSync(
-        this.binaryPath,
-        ['--version'],
-        { encoding: 'utf-8' },
+      const out: string | Payload = await youtubeDl(undefined as unknown as string, {
+        version: true,
+      } as Flags);
+      const text: string = typeof out === 'string' ? out : '';
+      const trimmed: string = text.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    } catch (err: unknown) {
+      this.logger.warn(
+        `youtubeDl({version:true}) failed: ${err instanceof Error ? err.message : String(err)}`,
       );
-      if (result.status !== 0) return null;
-      const out: string = (result.stdout ?? '').trim();
-      return out.length > 0 ? out : null;
-    } catch {
       return null;
     }
   }
 
   private detectFfmpeg(): boolean {
-    const bundled: string | undefined = helpers.findFFmpegBinary();
-    if (bundled) return true;
     try {
       const result: SpawnSyncReturns<string> = spawnSync('ffmpeg', ['-version'], {
         encoding: 'utf-8',
