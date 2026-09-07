@@ -78,7 +78,7 @@ function formatDuration(seconds: number): string {
 
 function toNum(v: string | undefined): number {
   if (!v) return 0;
-  const n: number = Number(v);
+  const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
